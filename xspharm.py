@@ -457,9 +457,68 @@ def spectogrd(da, gridtype='gaussian', n_lat=None,  prepped=False, lat_name='lat
 # getpsichi
 # ===================================================================================================
 
-def getpsichi(u_grid, v_grid, gridtype, lat_dim='lat', lon_dim='lon', n_trunc=None):
+# def getpsichi(u_grid, v_grid, gridtype, lat_dim='lat', lon_dim='lon', n_trunc=None):
+#     """
+#         Returns streamfunction (psi) and velocity potential (chi) using spharm package
+        
+#         Parameters
+#         ----------
+#         u_grid : xarray DataArray
+#             Array containing grid of zonal winds
+#         v_grid : xarray DataArray
+#             Array containing grid of meridional winds
+#         gridtype : "gaussian" or "regular"
+#             Grid type of da
+#         n_trunc : int, optional
+#             Spectral truncation limit
+            
+#         Returns
+#         -------
+#         xarray Dataset
+#             Arrays containing the streamfunction and velocity potential
+#     """
+
+#     def _getpsichi(st, u, v, n_trunc):
+#         """
+#             Wrap Spharmt.getpsichi to be dask compatible
+#         """
+#         if isinstance(u, darray.core.Array):
+#             @darray.as_gufunc(signature="(),(),()->(),()", 
+#                               output_dtypes=(float, float),
+#                               allow_rechunk=True)
+#             def _gu_getpsichi(u, v, n_trunc):
+#                 return st.getpsichi(u, v, n_trunc)
+#             psi, chi = _gu_getpsichi(u, v, n_trunc)
+#             return psi, chi
+#         else:
+#             psi, chi = st.getpsichi(u, v, n_trunc)
+#             return psi, chi
+    
+#     if n_trunc is None:
+#         n_trunc = int(u_grid.sizes[lat_dim]/2) - 1
+        
+#     u_grid, _ = _prep_for_spharm(u_grid, lat_dim=lat_dim, lon_dim=lon_dim)
+#     v_grid, flipped = _prep_for_spharm(v_grid, lat_dim=lat_dim, lon_dim=lon_dim)
+    
+#     st = _create_spharmt(u_grid.sizes[lon_dim], u_grid.sizes[lat_dim], gridtype=gridtype)
+
+#     psi, chi = xr.apply_ufunc(_getpsichi, st, u_grid, v_grid, n_trunc,
+#                                 input_core_dims=[[], u_grid.dims, v_grid.dims, []],
+#                                 output_core_dims=[u_grid.dims, v_grid.dims],
+#                                 dask='allowed')
+
+#     psichi = xr.merge([psi.unstack(_NON_HORIZONTAL_DIM).rename('psi'), 
+#                        chi.unstack(_NON_HORIZONTAL_DIM).rename('chi')])
+        
+#     return _add_attrs(psichi, **{'xspharm_history':'getpsichi(..'
+#                                  ' gridtype=' + gridtype + 
+#                                  ', n_trunc=' + str(n_trunc) +')'})
+
+
+# Tested, and takes same amount of time to do separately with map_blocks, i.e.:
+def getpsi(u_grid, v_grid, gridtype, n_trunc=None):
     """
-        Returns streamfunction (psi) and velocity potential (chi) using spharm package
+        Returns stream function (psi) using spharm package
         
         Parameters
         ----------
@@ -474,26 +533,24 @@ def getpsichi(u_grid, v_grid, gridtype, lat_dim='lat', lon_dim='lon', n_trunc=No
             
         Returns
         -------
-        xarray Dataset
-            Arrays containing the streamfunction and velocity potential
+        xarray DataArray
+            Arrays containing the stream function
     """
 
-    def _getpsichi(st, u, v, n_trunc):
+    def _getpsi(st, u, v, n_trunc):
         """
             Wrap Spharmt.getpsichi to be dask compatible
         """
+        def _ggetpsi(st, u, v, n_trunc):
+            psi, _ = st.getpsichi(u, v, n_trunc)
+            return psi
+        
         if isinstance(u, darray.core.Array):
-            @darray.as_gufunc(signature="(),(),()->(),()", 
-                              output_dtypes=(float, float),
-                              allow_rechunk=True)
-            def _gu_getpsichi(u, v, n_trunc):
-                return st.getpsichi(u, v, n_trunc)
-            psi, chi = _gu_getpsichi(u, v, n_trunc)
-            return psi, chi
+            return darray.map_blocks(_ggetpsi, st, u, v, n_trunc,
+                                     dtype=np.float)
         else:
-            psi, chi = st.getpsichi(u, v, n_trunc)
-            return psi, chi
-    
+            return _ggetpsi(st, u, v, n_trunc)
+ 
     if n_trunc is None:
         n_trunc = int(u_grid.sizes[lat_dim]/2) - 1
         
@@ -502,119 +559,63 @@ def getpsichi(u_grid, v_grid, gridtype, lat_dim='lat', lon_dim='lon', n_trunc=No
     
     st = _create_spharmt(u_grid.sizes[lon_dim], u_grid.sizes[lat_dim], gridtype=gridtype)
 
-    psi, chi = xr.apply_ufunc(_getpsichi, st, u_grid, v_grid, n_trunc,
-                                input_core_dims=[[], u_grid.dims, v_grid.dims, []],
-                                output_core_dims=[u_grid.dims, v_grid.dims],
-                                dask='allowed')
-
-    psichi = xr.merge([psi.unstack(_NON_HORIZONTAL_DIM).rename('psi'), 
-                       chi.unstack(_NON_HORIZONTAL_DIM).rename('chi')])
+    psi = xr.apply_ufunc(_getpsi, st, u_grid, v_grid, n_trunc,
+                         input_core_dims=[[], u_grid.dims, v_grid.dims, []],
+                         output_core_dims=[u_grid.dims],
+                         dask='allowed').unstack(_NON_HORIZONTAL_DIM).rename('psi')
         
-    return _add_attrs(psichi, **{'xspharm_history':'getpsichi(..'
-                                 ' gridtype=' + gridtype + 
-                                 ', n_trunc=' + str(n_trunc) +')'})
+    return _add_attrs(psi, **{'xspharm_history':'getpsi(..'
+                              ' gridtype=' + gridtype + 
+                              ', n_trunc=' + str(n_trunc) +')'})
 
-
-# Tested, and takes same amount of time to do separately with map_blocks, i.e.:
-# def getpsi(u_grid, v_grid, gridtype, n_trunc=None):
-#     """
-#         Returns stream function (psi) using spharm package
+def getchi(u_grid, v_grid, gridtype, n_trunc=None):
+    """
+        Returns velocity potential (chi) using spharm package
         
-#         Parameters
-#         ----------
-#         u_grid : xarray DataArray
-#             Array containing grid of zonal winds
-#         v_grid : xarray DataArray
-#             Array containing grid of meridional winds
-#         gridtype : "gaussian" or "regular"
-#             Grid type of da
-#         n_trunc : int, optional
-#             Spectral truncation limit
+        Parameters
+        ----------
+        u_grid : xarray DataArray
+            Array containing grid of zonal winds
+        v_grid : xarray DataArray
+            Array containing grid of meridional winds
+        gridtype : "gaussian" or "regular"
+            Grid type of da
+        n_trunc : int, optional
+            Spectral truncation limit
             
-#         Returns
-#         -------
-#         xarray DataArray
-#             Arrays containing the stream function
-#     """
+        Returns
+        -------
+        xarray DataArray
+            Arrays containing the stream function
+    """
 
-#     def _getpsi(st, u, v, n_trunc):
-#         """
-#             Wrap Spharmt.getpsichi to be dask compatible
-#         """
-#         def _ggetpsi(st, u, v, n_trunc):
-#             psi, _ = st.getpsichi(u, v, n_trunc)
-#             return psi
+    def _getchi(st, u, v, n_trunc):
+        """
+            Wrap Spharmt.getpsichi to be dask compatible
+        """
+        def _ggetchi(st, u, v, n_trunc):
+            _, chi = st.getpsichi(u, v, n_trunc)
+            return chi
         
-#         if isinstance(u, darray.core.Array):
-#             return darray.map_blocks(_ggetpsi, st, u, v, n_trunc,
-#                                      dtype=np.float)
-#         else:
-#             return _ggetpsi(st, u, v, n_trunc)
- 
-#     if n_trunc is None:
-#         n_trunc = int(u_grid.sizes[lat_dim]/2) - 1
+        if isinstance(u, darray.core.Array):
+            return darray.map_blocks(_ggetchi, st, u, v, n_trunc,
+                                     dtype=np.float)
+        else:
+            return _ggetchi(st, u, v, n_trunc)
+
+    if n_trunc is None:
+        n_trunc = int(u_grid.sizes[lat_dim]/2) - 1
         
-#     u_grid, _ = _prep_for_spharm(u_grid, lat_dim=lat_dim, lon_dim=lon_dim)
-#     v_grid, flipped = _prep_for_spharm(v_grid, lat_dim=lat_dim, lon_dim=lon_dim)
+    u_grid, _ = _prep_for_spharm(u_grid, lat_dim=lat_dim, lon_dim=lon_dim)
+    v_grid, flipped = _prep_for_spharm(v_grid, lat_dim=lat_dim, lon_dim=lon_dim)
     
-#     st = _create_spharmt(u_grid.sizes[lon_dim], u_grid.sizes[lat_dim], gridtype=gridtype)
+    st = _create_spharmt(u_grid.sizes[lon_dim], u_grid.sizes[lat_dim], gridtype=gridtype)
 
-#     psi = xr.apply_ufunc(_getpsi, st, u_grid, v_grid, n_trunc,
-#                          input_core_dims=[[], u_grid.dims, v_grid.dims, []],
-#                          output_core_dims=[u_grid.dims],
-#                          dask='allowed').unstack(_NON_HORIZONTAL_DIM).rename('psi')
+    chi = xr.apply_ufunc(_getchi, st, u_grid, v_grid, n_trunc,
+                         input_core_dims=[[], u_grid.dims, v_grid.dims, []],
+                         output_core_dims=[u_grid.dims],
+                         dask='allowed').unstack(_NON_HORIZONTAL_DIM).rename('chi')
         
-#     return _add_attrs(psi, **{'xspharm_history':'getpsi(..'
-#                               ' gridtype=' + gridtype + 
-#                               ', n_trunc=' + str(n_trunc) +')'})
-# def getchi(u_grid, v_grid, gridtype, n_trunc=None):
-#     """
-#         Returns velocity potential (chi) using spharm package
-        
-#         Parameters
-#         ----------
-#         u_grid : xarray DataArray
-#             Array containing grid of zonal winds
-#         v_grid : xarray DataArray
-#             Array containing grid of meridional winds
-#         gridtype : "gaussian" or "regular"
-#             Grid type of da
-#         n_trunc : int, optional
-#             Spectral truncation limit
-            
-#         Returns
-#         -------
-#         xarray DataArray
-#             Arrays containing the stream function
-#     """
-
-#     def _getchi(st, u, v, n_trunc):
-#         """
-#             Wrap Spharmt.getpsichi to be dask compatible
-#         """
-#         def _ggetchi(st, u, v, n_trunc):
-#             _, chi = st.getpsichi(u, v, n_trunc)
-#             return chi
-        
-#         if isinstance(u, darray.core.Array):
-#             return darray.map_blocks(_ggetchi, st, u, v, n_trunc,
-#                                      dtype=np.float)
-#         else:
-#             return _ggetchi(st, u, v, n_trunc)
-
-#     if n_trunc is None:
-#         n_trunc = int(u_grid.sizes[lat_dim]/2) - 1
-        
-#     u_grid, _ = _prep_for_spharm(u_grid, lat_dim=lat_dim, lon_dim=lon_dim)
-#     v_grid, flipped = _prep_for_spharm(v_grid, lat_dim=lat_dim, lon_dim=lon_dim)
-    
-#     st = _create_spharmt(u_grid.sizes[lon_dim], u_grid.sizes[lat_dim], gridtype=gridtype)
-
-#     chi = xr.apply_ufunc(_getchi, st, u_grid, v_grid, n_trunc,
-#                          input_core_dims=[[], u_grid.dims, v_grid.dims, []],
-#                          output_core_dims=[u_grid.dims],
-#                          dask='allowed').unstack(_NON_HORIZONTAL_DIM).rename('chi')
-        
-#     return _add_attrs(chi, **{'xspharm_history':'getchi(..'
-#                               ' gridtype=' + gridtype + 
-#                               ', n_trunc=' + str(n_trunc) +')'})
+    return _add_attrs(chi, **{'xspharm_history':'getchi(..'
+                              ' gridtype=' + gridtype + 
+                              ', n_trunc=' + str(n_trunc) +')'})
