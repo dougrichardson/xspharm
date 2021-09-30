@@ -516,7 +516,7 @@ def spectogrd(da, gridtype='gaussian', n_lat=None,  prepped=False, lat_name='lat
 
 
 # Tested, and takes same amount of time to do separately with map_blocks, i.e.:
-def getpsi(u_grid, v_grid, gridtype, n_trunc=None):
+def getpsi(u_grid, v_grid, gridtype, lat_dim='lat', lon_dim='lon', n_trunc=None):
     """
         Returns stream function (psi) using spharm package
         
@@ -568,7 +568,7 @@ def getpsi(u_grid, v_grid, gridtype, n_trunc=None):
                               ' gridtype=' + gridtype + 
                               ', n_trunc=' + str(n_trunc) +')'})
 
-def getchi(u_grid, v_grid, gridtype, n_trunc=None):
+def getchi(u_grid, v_grid, gridtype, lat_dim='lat', lon_dim='lon', n_trunc=None):
     """
         Returns velocity potential (chi) using spharm package
         
